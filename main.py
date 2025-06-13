@@ -1,35 +1,23 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import mysql.connector
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.security.api_key import APIKeyHeader
+
+API_KEY = "your_super_secret_key"  # Store securely in real projects
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 app = FastAPI()
 
-# Your MySQL config (use environment variables later in Render)
-DB_CONFIG = {
-    "host": "your_host",
-    "user": "your_user",
-    "password": "your_password",
-    "database": "your_database"
-}
+def verify_api_key(api_key: str = Depends(api_key_header)):
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Could not validate API key")
 
-class LoginRequest(BaseModel):
-    code: str
-    password: str
+@app.post("/login", dependencies=[Depends(verify_api_key)])
+async def login(payload: dict):
+    code = payload.get("code")
+    password = payload.get("password")
+    # Your authentication logic
+    return {"message": f"Login successful for {code}"}
 
-@app.post("/login")
-def login_user(request: LoginRequest):
-    try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM User_Credentials WHERE code = %s AND password = %s", (request.code, request.password))
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if result:
-            return {"status": "success", "user": result}
-        else:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+@app.get("/")
+def root():
+    return {"message": "API is live. Use POST /login with API key."}
