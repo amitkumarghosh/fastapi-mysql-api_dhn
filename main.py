@@ -1,7 +1,8 @@
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security.api_key import APIKeyHeader
+import os
 
-API_KEY = "your_super_secret_key"  # Store securely in real projects
+API_KEY = os.getenv("API_KEY", "CDy4mY7O0YvuHD0cNJ8BmtGMukr_22MsabUomCx-CNk")  # Store securely in real projects
 API_KEY_NAME = "X-API-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
