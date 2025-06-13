@@ -13,7 +13,7 @@ def verify_api_key(api_key: str = Depends(api_key_header)):
         raise HTTPException(status_code=403, detail="Could not validate API key")
 
 @app.post("/login", dependencies=[Depends(verify_api_key)])
-async def login(payload: dict):
+def login(payload: dict):
     code = payload.get("code")
     password = payload.get("password")
     # Your authentication logic
