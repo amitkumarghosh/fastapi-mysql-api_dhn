@@ -4,16 +4,17 @@ from pydantic import BaseModel
 from mysql.connector.pooling import MySQLConnectionPool
 import mysql.connector
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
-import threading, time
+import threading, time as time_module
+import pytz
 
 app = FastAPI()
 
 API_KEY = os.getenv("API_KEY", "your_api_key_here")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# ✅ Setup a global connection pool (21 connections)
+# ✅ Setup a global connection pool
 pool = MySQLConnectionPool(
     pool_name="main_pool",
     pool_size=21,
@@ -24,26 +25,43 @@ pool = MySQLConnectionPool(
     database=os.getenv("DB_NAME")
 )
 
-# ✅ Connection Logger
+# ✅ Get IST datetime
+def get_ist_now():
+    return datetime.now(pytz.timezone("Asia/Kolkata"))
+
+# ✅ Log connection activity
 def log_connection_activity(user_code, activity, remarks=""):
     try:
         conn = pool.get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            """
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS Connection_Log (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 user_code VARCHAR(50),
+                user_role VARCHAR(50),
                 activity VARCHAR(50),
-                log_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                log_time DATETIME,
                 remarks TEXT
             )
-            """
-        )
-        cursor.execute(
-            "INSERT INTO Connection_Log (user_code, activity, remarks) VALUES (%s, %s, %s)",
-            (user_code, activity, remarks)
-        )
+        """)
+
+        role = "Unknown"
+        try:
+            cursor.execute("SELECT User_Role FROM User_Credentials WHERE Code = %s", (user_code,))
+            result = cursor.fetchone()
+            if result:
+                role = result[0]
+        except:
+            pass
+
+        log_time = get_ist_now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cursor.execute("""
+            INSERT INTO Connection_Log (user_code, user_role, activity, log_time, remarks)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (user_code, role, activity, log_time, remarks))
+
         conn.commit()
     except Exception as e:
         print(f"Log Error: {e}")
@@ -54,14 +72,36 @@ def log_connection_activity(user_code, activity, remarks=""):
         except:
             pass
 
-# ✅ Helper to get a connection from the pool
-def get_connection():
+# ✅ Get DB connection and log it
+def get_connection(user_code="system"):
     conn = pool.get_connection()
-    log_connection_activity("system", "get_connection", "Connection opened")
+    log_connection_activity(user_code, "get_connection", "Connection opened")
     return conn
 
-# ✅ Kill Inactive Connections
-def cleanup_inactive_connections(threshold=100):
+# ✅ Close idle 'get_connection' logs
+def close_idle_connections(timeout_minutes=5):
+    try:
+        conn = pool.get_connection()
+        cursor = conn.cursor()
+        timeout = get_ist_now() - timedelta(minutes=timeout_minutes)
+        timeout_str = timeout.strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("""
+            UPDATE Connection_Log
+            SET activity = 'connection_closed', remarks = 'Closed after timeout'
+            WHERE activity = 'get_connection' AND log_time < %s
+        """, (timeout_str,))
+        conn.commit()
+    except Exception as e:
+        print(f"Idle connection cleanup failed: {e}")
+    finally:
+        try:
+            cursor.close()
+            conn.close()
+        except:
+            pass
+
+# ✅ Cleanup MySQL Sleep connections if too many open
+def cleanup_mysql_and_logs(threshold=100):
     try:
         conn = pool.get_connection()
         cursor = conn.cursor()
@@ -76,18 +116,24 @@ def cleanup_inactive_connections(threshold=100):
                 if command == 'Sleep' and time > 10:
                     try:
                         cursor.execute(f"KILL {id};")
-                        log_connection_activity("system", "kill_thread", f"Killed ID {id} after {time}s")
+                        log_connection_activity(user, "kill_thread", f"Killed ID {id} after {time}s")
                     except Exception as kill_err:
                         print(f"Failed to kill thread {id}: {kill_err}")
         cursor.close()
         conn.close()
+        close_idle_connections()
     except Exception as e:
         print(f"Cleanup failed: {e}")
 
-# ✅ Periodic Cleanup
-threading.Thread(target=lambda: (time.sleep(5), [cleanup_inactive_connections() or time.sleep(300) for _ in iter(int, 1)]), daemon=True).start()
+# ✅ Periodically run cleanup
+threading.Thread(
+    target=lambda: (time_module.sleep(5), [cleanup_mysql_and_logs() or time_module.sleep(300) for _ in iter(int, 1)]),
+    daemon=True
+).start()
 
 
+
+# ======================== CONFIGURATION ============================
 def verify_api_key(api_key: str = Depends(api_key_header)):
     if api_key != API_KEY:
         raise HTTPException(status_code=403, detail="Could not validate API key")
