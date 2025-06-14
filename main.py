@@ -159,3 +159,20 @@ def has_in_time_recorded(data: CheckInRequest):
     cursor.close()
     conn.close()
     return {"has_in_time": bool(result), "in_time": result[0] if result else None}
+
+@app.get("/workstations", dependencies=[Depends(verify_api_key)])
+def get_workstations():
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    cursor.execute("SELECT DISTINCT Workstation_Name FROM User_Credentials WHERE User_Role = 'Technician'")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    workstations = [row[0] for row in rows if row[0]]
+    return {"workstations": sorted(workstations)}
