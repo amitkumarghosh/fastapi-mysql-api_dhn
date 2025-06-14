@@ -44,7 +44,7 @@
 #==========================================================
 
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 import mysql.connector
@@ -176,3 +176,26 @@ def get_workstations():
 
     workstations = [row[0] for row in rows if row[0]]
     return {"workstations": sorted(workstations)}
+
+
+from fastapi import Query
+
+@app.get("/supervisor-name", dependencies=[Depends(verify_api_key)])
+def get_supervisor_name(code: str = Query(...)):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT Supervisor_Code 
+        FROM User_Credentials 
+        WHERE Code = %s AND Supervisor_Code IS NOT NULL
+    """, (code,))
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    return {"supervisor_name": row[0] if row else "Unknown"}
