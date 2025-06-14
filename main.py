@@ -178,8 +178,6 @@ def get_workstations():
     return {"workstations": sorted(workstations)}
 
 
-from fastapi import Query
-
 @app.get("/supervisor-name", dependencies=[Depends(verify_api_key)])
 def get_supervisor_name(code: str = Query(...)):
     conn = mysql.connector.connect(
@@ -189,13 +187,22 @@ def get_supervisor_name(code: str = Query(...)):
         database=os.getenv("DB_NAME")
     )
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT Supervisor_Code 
-        FROM User_Credentials 
-        WHERE Code = %s AND Supervisor_Code IS NOT NULL
-    """, (code,))
-    row = cursor.fetchone()
+
+    # Step 1: Get Supervisor_Code from the technician's row
+    cursor.execute("SELECT Supervisor_Code FROM User_Credentials WHERE Code = %s", (code,))
+    result = cursor.fetchone()
+    supervisor_code = result[0] if result else None
+
+    supervisor_name = "Unknown"
+    if supervisor_code:
+        # Step 2: Get Supervisor's Name
+        cursor.execute("SELECT Name FROM User_Credentials WHERE Code = %s", (supervisor_code,))
+        result = cursor.fetchone()
+        if result:
+            supervisor_name = result[0]
+
     cursor.close()
     conn.close()
 
-    return {"supervisor_name": row[0] if row else "Unknown"}
+    return {"supervisor_name": supervisor_name}
+
