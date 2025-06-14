@@ -169,7 +169,7 @@ def get_workstations():
         database=os.getenv("DB_NAME")
     )
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT Workstation_Name FROM User_Credentials WHERE User_Role = 'Technician'")
+    cursor.execute("SELECT DISTINCT Workstation_Name FROM User_Credentials WHERE User_Role = 'Workstation'")
     rows = cursor.fetchall()
     cursor.close()
     conn.close()
