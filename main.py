@@ -1,55 +1,10 @@
-# from fastapi import FastAPI, Depends, HTTPException
-# from fastapi.security.api_key import APIKeyHeader
-# from pydantic import BaseModel
-# import mysql.connector
-# import os
-
-# app = FastAPI()
-
-# API_KEY = os.getenv("API_KEY", "your_api_key_here")
-# API_KEY_NAME = "X-API-Key"
-# api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-
-# def verify_api_key(api_key: str = Depends(api_key_header)):
-#     if api_key != API_KEY:
-#         raise HTTPException(status_code=403, detail="Could not validate API key")
-
-# # ✅ Define the expected request body
-# class LoginRequest(BaseModel):
-#     code: str
-#     password: str
-
-# @app.post("/login", dependencies=[Depends(verify_api_key)])
-# def login(request: LoginRequest):
-#     conn = mysql.connector.connect(
-#     host=os.getenv("DB_HOST"),
-#     user=os.getenv("DB_USER"),
-#     password=os.getenv("DB_PASSWORD"),
-#     database=os.getenv("DB_NAME")
-#     )
-#     cursor = conn.cursor(dictionary=True)
-#     cursor.execute("SELECT * FROM User_Credentials WHERE code = %s AND password = %s", (request.code, request.password))
-#     user = cursor.fetchone()
-#     cursor.close()
-#     conn.close()
-
-#     if user:
-#         return {
-#             "status": "success",
-#             "user": user
-#         }
-#     else:
-#         raise HTTPException(status_code=401, detail="Invalid credentials")
-
-#==========================================================
-
-
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 import mysql.connector
 import os
 from datetime import datetime
+from typing import List
 
 app = FastAPI()
 
@@ -206,3 +161,118 @@ def get_supervisor_name(code: str = Query(...)):
 
     return {"supervisor_name": supervisor_name}
 
+from typing import List
+
+class AdvisorEntry(BaseModel):
+    date: str
+    timestamp: str
+    advisor_name: str
+    workstation_name: str
+    supervisor_name: str
+    running_repair: int
+    free_service: int
+    paid_service: int
+    body_shop: int
+    total: int
+    align: int
+    balance: int
+    align_and_balance: int
+
+@app.post("/advisor/save", dependencies=[Depends(verify_api_key)])
+def save_advisor_data(entries: List[AdvisorEntry]):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    for entry in entries:
+        cursor.execute("""
+            SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s
+        """, (entry.date, entry.advisor_name))
+        exists = cursor.fetchone()[0] > 0
+
+        if exists:
+            cursor.execute("""
+                UPDATE Advisor_Data
+                SET running_repair=%s, free_service=%s, paid_service=%s, body_shop=%s,
+                    total=%s, align=%s, balance=%s, align_and_balance=%s, timestamp=%s,
+                    workstation_name=%s, supervisor_name=%s
+                WHERE date=%s AND advisor_name=%s
+            """, (
+                entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop,
+                entry.total, entry.align, entry.balance, entry.align_and_balance, entry.timestamp,
+                entry.workstation_name, entry.supervisor_name,
+                entry.date, entry.advisor_name
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO Advisor_Data (
+                    date, timestamp, advisor_name, workstation_name, supervisor_name,
+                    running_repair, free_service, paid_service, body_shop, total,
+                    align, balance, align_and_balance
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, entry.supervisor_name,
+                entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop, entry.total,
+                entry.align, entry.balance, entry.align_and_balance
+            ))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return {"status": "success", "message": "Advisor data saved"}
+
+@app.get("/advisor/list", dependencies=[Depends(verify_api_key)])
+def get_advisors(supervisor_code: str = Query(...)):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT name FROM User_Credentials WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
+    """, (supervisor_code,))
+    advisors = [row[0] for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return {"advisors": advisors}
+
+@app.get("/advisor/monthly-summary", dependencies=[Depends(verify_api_key)])
+def advisor_summary(supervisor_code: str = Query(...), start_date: str = Query(...)):
+    conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME")
+    )
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT name FROM User_Credentials 
+        WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
+    """, (supervisor_code,))
+    advisors = [row[0] for row in cursor.fetchall()]
+    if not advisors:
+        return {"data": []}
+
+    placeholders = ",".join(["%s"] * len(advisors))
+    query = f"""
+        SELECT advisor_name,
+               SUM(running_repair), SUM(free_service), SUM(paid_service), SUM(body_shop),
+               SUM(total), SUM(align), SUM(balance), SUM(align_and_balance)
+        FROM Advisor_Data
+        WHERE date >= %s AND advisor_name IN ({placeholders})
+        GROUP BY advisor_name
+    """
+    cursor.execute(query, [start_date] + advisors)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    return {
+        "data": rows,
+        "columns": ["Advisor Name", "Running Repair", "Free Service", "Paid Service", 
+                    "Body Shop", "Total", "Align", "Balance", "Align and Balance"]
+    }
