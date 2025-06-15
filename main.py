@@ -167,7 +167,7 @@ class AdvisorEntry(BaseModel):
     timestamp: str
     advisor_name: str
     workstation_name: str
-    supervisor_name: str
+    supervisor_code: str   # <-- Add supervisor_code instead of supervisor_name
     running_repair: int
     free_service: int
     paid_service: int
@@ -176,6 +176,7 @@ class AdvisorEntry(BaseModel):
     align: int
     balance: int
     align_and_balance: int
+
 
 class WorkstationEntry(BaseModel):
     date: str
@@ -297,6 +298,7 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                 except Exception as e:
                     print(f"Supervisor name resolution failed: {e}")
 
+
                 # ✅ Existing logic remains unchanged
                 cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", 
                                (entry.date, entry.advisor_name))
@@ -316,17 +318,19 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                         entry.date, entry.advisor_name
                     ))
                 else:
-                    cursor.execute("""
-                        INSERT INTO Advisor_Data (
-                            date, timestamp, advisor_name, workstation_name, supervisor_name,
-                            running_repair, free_service, paid_service, body_shop, total,
-                            align, balance, align_and_balance
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    supervisor_code = entry.supervisor_code
+
+                    cursor.execute("""INSERT INTO Advisor_Data (
+                        date, timestamp, advisor_name, workstation_name, supervisor_code, 
+                        running_repair, free_service, paid_service, body_shop, total,
+                        align, balance, align_and_balance
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, resolved_supervisor_name,
+                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, supervisor_code,
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop, entry.total,
                         entry.align, entry.balance, entry.align_and_balance
                     ))
+
             conn.commit()
             return {"status": "success", "message": "Advisor data saved"}
 
