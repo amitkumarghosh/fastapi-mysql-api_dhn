@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import List
 import threading, time as time_module
 import pytz
+import pandas as pd
 
 app = FastAPI()
 
@@ -278,7 +279,20 @@ def save_advisor_data(entries: List[AdvisorEntry]):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             for entry in entries:
-                cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", (entry.date, entry.advisor_name))
+
+                # ✅ Resolve supervisor_code into supervisor_name
+                resolved_supervisor_name = "Unknown"
+                try:
+                    cursor.execute("SELECT Name FROM User_Credentials WHERE Code = %s", (entry.supervisor_name,))
+                    result = cursor.fetchone()
+                    if result:
+                        resolved_supervisor_name = result[0]
+                except Exception as e:
+                    print(f"Supervisor resolution failed for {entry.supervisor_name}: {e}")
+
+                # ✅ Check if record already exists
+                cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", 
+                               (entry.date, entry.advisor_name))
                 exists = cursor.fetchone()[0] > 0
 
                 if exists:
@@ -291,7 +305,7 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                     """, (
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop,
                         entry.total, entry.align, entry.balance, entry.align_and_balance, entry.timestamp,
-                        entry.workstation_name, entry.supervisor_name,
+                        entry.workstation_name, resolved_supervisor_name,
                         entry.date, entry.advisor_name
                     ))
                 else:
@@ -302,7 +316,7 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                             align, balance, align_and_balance
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, entry.supervisor_name,
+                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, resolved_supervisor_name,
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop, entry.total,
                         entry.align, entry.balance, entry.align_and_balance
                     ))
