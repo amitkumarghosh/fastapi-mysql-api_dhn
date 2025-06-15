@@ -176,6 +176,21 @@ class AdvisorEntry(BaseModel):
     balance: int
     align_and_balance: int
 
+class WorkstationEntry(BaseModel):
+    date: str
+    timestamp: str
+    workstation_name: str
+    supervisor_name: str
+    running_repair: int
+    free_service: int
+    paid_service: int
+    body_shop: int
+    total: int
+    align: int
+    balance: int
+    align_and_balance: int
+
+
 # ======================== ENDPOINTS ============================
 
 @app.post("/login", dependencies=[Depends(verify_api_key)])
@@ -308,41 +323,6 @@ def get_advisors(workstation_code: str = Query(...)):
 
 
 
-@app.get("/advisor/monthly-summary", dependencies=[Depends(verify_api_key)])
-def advisor_summary(supervisor_code: str = Query(...), start_date: str = Query(...)):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT name FROM User_Credentials 
-                WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
-            """, (supervisor_code,))
-            advisors = [row[0] for row in cursor.fetchall()]
-            if not advisors:
-                return {"data": []}
-
-            placeholders = ",".join(["%s"] * len(advisors))
-            query = f"""
-                SELECT advisor_name,
-                       SUM(running_repair), SUM(free_service), SUM(paid_service), SUM(body_shop),
-                       SUM(total), SUM(align), SUM(balance), SUM(align_and_balance)
-                FROM Advisor_Data
-                WHERE date >= %s AND advisor_name IN ({placeholders})
-                GROUP BY advisor_name
-            """
-            cursor.execute(query, [start_date] + advisors)
-            rows = cursor.fetchall()
-
-            return {
-                "data": rows,
-                "columns": ["Advisor Name", "Running Repair", "Free Service", "Paid Service", 
-                            "Body Shop", "Total", "Align", "Balance", "Align and Balance"]
-            }
-
-
-
-@app.get("/workstation/summary", dependencies=[Depends(verify_api_key)])
-def workstation_summary(workstation_name: str = Query(...)):
-    today = get_ist_now().strftime("%Y-%m-%d")
     start_of_month = get_ist_now().replace(day=1).strftime("%Y-%m-%d")
 
     response = {
@@ -385,19 +365,6 @@ def workstation_summary(workstation_name: str = Query(...)):
 
     return response
 
-class WorkstationEntry(BaseModel):
-    date: str
-    timestamp: str
-    workstation_name: str
-    supervisor_name: str
-    running_repair: int
-    free_service: int
-    paid_service: int
-    body_shop: int
-    total: int
-    align: int
-    balance: int
-    align_and_balance: int
 
 
 @app.post("/workstation/save", dependencies=[Depends(verify_api_key)])
@@ -438,3 +405,100 @@ def save_workstation_entry(entry: WorkstationEntry):
 
             conn.commit()
             return {"status": "success", "message": "Workstation data saved successfully."}
+
+@app.get("/workstation/summary", dependencies=[Depends(verify_api_key)])
+def workstation_summary(workstation_name: str = Query(...)):
+    today = get_ist_now().strftime("%Y-%m-%d")
+    start_of_month = get_ist_now().replace(day=1).strftime("%Y-%m-%d")
+
+    print("▶️ [Workstation Summary] Requested for:", workstation_name)
+    print("   ↪ Start of month:", start_of_month, "| Today:", today)
+
+    response = {
+        "target": None,
+        "monthly_totals": None,
+        "existing_today": None
+    }
+
+    with get_connection() as conn:
+        with conn.cursor(dictionary=True) as cursor:
+            # Fetch Target
+            cursor.execute("SELECT Target FROM User_Credentials WHERE Name = %s", (workstation_name,))
+            row = cursor.fetchone()
+            print("   ↪ Target Row:", row)
+            response["target"] = row["Target"] if row else None
+
+            # Fetch Monthly Summary
+            cursor.execute("""
+                SELECT 
+                    SUM(running_repair) AS running_repair,
+                    SUM(free_service) AS free_service,
+                    SUM(paid_service) AS paid_service,
+                    SUM(body_shop) AS body_shop,
+                    SUM(total) AS total,
+                    SUM(align) AS align,
+                    SUM(balance) AS balance,
+                    SUM(align_and_balance) AS align_and_balance
+                FROM Workstation_Data
+                WHERE date >= %s AND workstation_name = %s
+            """, (start_of_month, workstation_name))
+            summary = cursor.fetchone()
+            print("   ↪ Monthly Summary:", summary)
+            response["monthly_totals"] = summary
+
+            # Fetch Existing Data for Today
+            cursor.execute("""
+                SELECT running_repair, free_service, paid_service, body_shop,
+                       total, align, balance, align_and_balance
+                FROM Workstation_Data
+                WHERE date = %s AND workstation_name = %s
+            """, (today, workstation_name))
+            today_data = cursor.fetchone()
+            print("   ↪ Existing Today’s Entry:", today_data)
+            response["existing_today"] = today_data
+
+    return response
+
+
+
+@app.get("/advisor/monthly-summary", dependencies=[Depends(verify_api_key)])
+def advisor_summary(start_date: str = Query(...), advisor_names: str = Query(...)):
+    advisor_list = advisor_names.split(",")
+    print("▶️ [Advisor Summary] Start Date:", start_date)
+    print("   ↪ Advisors:", advisor_list)
+
+    if not advisor_list:
+        return {"summary": []}
+
+    placeholders = ",".join(["%s"] * len(advisor_list))
+
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            query = f"""
+                SELECT advisor_name,
+                       SUM(running_repair), SUM(free_service), SUM(paid_service), SUM(body_shop),
+                       SUM(total), SUM(align), SUM(balance), SUM(align_and_balance)
+                FROM Advisor_Data
+                WHERE date >= %s AND advisor_name IN ({placeholders})
+                GROUP BY advisor_name
+            """
+            print("   ↪ Executing SQL:", query)
+            cursor.execute(query, [start_date] + advisor_list)
+            rows = cursor.fetchall()
+            print("   ↪ Summary Results:", rows)
+
+            return {
+                "summary": [
+                    {
+                        "Advisor Name": row[0],
+                        "Running Repair": row[1],
+                        "Free Service": row[2],
+                        "Paid Service": row[3],
+                        "Body Shop": row[4],
+                        "Total": row[5],
+                        "Align": row[6],
+                        "Balance": row[7],
+                        "Align and Balance": row[8],
+                    } for row in rows
+                ]
+            }
