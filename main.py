@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 from mysql.connector.pooling import MySQLConnectionPool
@@ -335,3 +335,104 @@ def advisor_summary(supervisor_code: str = Query(...), start_date: str = Query(.
                 "columns": ["Advisor Name", "Running Repair", "Free Service", "Paid Service", 
                             "Body Shop", "Total", "Align", "Balance", "Align and Balance"]
             }
+
+
+
+@app.get("/workstation/summary", dependencies=[Depends(verify_api_key)])
+def workstation_summary(workstation_name: str = Query(...)):
+    today = get_ist_now().strftime("%Y-%m-%d")
+    start_of_month = get_ist_now().replace(day=1).strftime("%Y-%m-%d")
+
+    response = {
+        "target": None,
+        "monthly_totals": None,
+        "existing_today": None
+    }
+
+    with get_connection() as conn:
+        with conn.cursor(dictionary=True) as cursor:
+            # Fetch Target
+            cursor.execute("SELECT Target FROM User_Credentials WHERE Name = %s", (workstation_name,))
+            row = cursor.fetchone()
+            response["target"] = row["Target"] if row else None
+
+            # Fetch Monthly Summary
+            cursor.execute("""
+                SELECT 
+                    SUM(running_repair) AS running_repair,
+                    SUM(free_service) AS free_service,
+                    SUM(paid_service) AS paid_service,
+                    SUM(body_shop) AS body_shop,
+                    SUM(total) AS total,
+                    SUM(align) AS align,
+                    SUM(balance) AS balance,
+                    SUM(align_and_balance) AS align_and_balance
+                FROM Workstation_Data
+                WHERE date >= %s AND workstation_name = %s
+            """, (start_of_month, workstation_name))
+            response["monthly_totals"] = cursor.fetchone()
+
+            # Fetch Existing Data for Today
+            cursor.execute("""
+                SELECT running_repair, free_service, paid_service, body_shop,
+                       total, align, balance, align_and_balance
+                FROM Workstation_Data
+                WHERE date = %s AND workstation_name = %s
+            """, (today, workstation_name))
+            response["existing_today"] = cursor.fetchone()
+
+    return response
+
+class WorkstationEntry(BaseModel):
+    date: str
+    timestamp: str
+    workstation_name: str
+    supervisor_name: str
+    running_repair: int
+    free_service: int
+    paid_service: int
+    body_shop: int
+    total: int
+    align: int
+    balance: int
+    align_and_balance: int
+
+
+@app.post("/workstation/save", dependencies=[Depends(verify_api_key)])
+def save_workstation_entry(entry: WorkstationEntry):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT COUNT(*) FROM Workstation_Data WHERE date = %s AND workstation_name = %s
+            """, (entry.date, entry.workstation_name))
+            exists = cursor.fetchone()[0] > 0
+
+            if exists:
+                cursor.execute("""
+                    UPDATE Workstation_Data
+                    SET running_repair = %s, free_service = %s, paid_service = %s,
+                        body_shop = %s, total = %s, align = %s, balance = %s,
+                        align_and_balance = %s, timestamp = %s, supervisor_name = %s
+                    WHERE date = %s AND workstation_name = %s
+                """, (
+                    entry.running_repair, entry.free_service, entry.paid_service,
+                    entry.body_shop, entry.total, entry.align, entry.balance,
+                    entry.align_and_balance, entry.timestamp, entry.supervisor_name,
+                    entry.date, entry.workstation_name
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO Workstation_Data (
+                        date, timestamp, workstation_name, supervisor_name,
+                        running_repair, free_service, paid_service, body_shop,
+                        total, align, balance, align_and_balance
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    entry.date, entry.timestamp, entry.workstation_name, entry.supervisor_name,
+                    entry.running_repair, entry.free_service, entry.paid_service,
+                    entry.body_shop, entry.total, entry.align, entry.balance, entry.align_and_balance
+                ))
+
+            conn.commit()
+            return {"status": "success", "message": "Workstation data saved successfully."}
