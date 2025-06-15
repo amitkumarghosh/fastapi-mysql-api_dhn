@@ -127,7 +127,7 @@ def cleanup_mysql_and_logs(threshold=100):
 
 # ✅ Periodically run cleanup
 threading.Thread(
-    target=lambda: (time_module.sleep(5), [cleanup_mysql_and_logs() or time_module.sleep(300) for _ in iter(int, 1)]),
+    target=lambda: (time_module.sleep(5), [cleanup_mysql_and_logs() or time_module.sleep(150) for _ in iter(int, 1)]),
     daemon=True
 ).start()
 
