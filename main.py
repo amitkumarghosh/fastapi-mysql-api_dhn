@@ -167,7 +167,7 @@ class AdvisorEntry(BaseModel):
     timestamp: str
     advisor_name: str
     workstation_name: str
-    supervisor_code: str   # <-- Add supervisor_code instead of supervisor_name
+    supervisor_name: str  # ✅ supervisor_code is passed here
     running_repair: int
     free_service: int
     paid_service: int
@@ -176,6 +176,9 @@ class AdvisorEntry(BaseModel):
     align: int
     balance: int
     align_and_balance: int
+
+
+
 
 
 class WorkstationEntry(BaseModel):
@@ -277,29 +280,12 @@ def get_supervisor_name(code: str = Query(...)):
 
 @app.post("/advisor/save", dependencies=[Depends(verify_api_key)])
 def save_advisor_data(entries: List[AdvisorEntry]):
+    print("Received advisor entries:", entries)  # ✅ Debug log
     with get_connection() as conn:
         with conn.cursor() as cursor:
             for entry in entries:
+                supervisor_code = entry.supervisor_name  # ✅ we store code directly
 
-                # ✅ New logic to resolve supervisor_name based on workstation_name
-                resolved_supervisor_name = "Unknown"
-                try:
-                    # First: get supervisor_code from workstation name
-                    cursor.execute("SELECT Supervisor_Code FROM User_Credentials WHERE Name = %s", (entry.workstation_name,))
-                    supervisor_code_result = cursor.fetchone()
-                    
-                    if supervisor_code_result:
-                        supervisor_code = supervisor_code_result[0]
-                        # Second: get supervisor_name from supervisor_code
-                        cursor.execute("SELECT Name FROM User_Credentials WHERE Code = %s", (supervisor_code,))
-                        supervisor_name_result = cursor.fetchone()
-                        if supervisor_name_result:
-                            resolved_supervisor_name = supervisor_name_result[0]
-                except Exception as e:
-                    print(f"Supervisor name resolution failed: {e}")
-
-
-                # ✅ Existing logic remains unchanged
                 cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", 
                                (entry.date, entry.advisor_name))
                 exists = cursor.fetchone()[0] > 0
@@ -314,23 +300,21 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                     """, (
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop,
                         entry.total, entry.align, entry.balance, entry.align_and_balance, entry.timestamp,
-                        entry.workstation_name, resolved_supervisor_name,
+                        entry.workstation_name, supervisor_code,
                         entry.date, entry.advisor_name
                     ))
                 else:
-                    supervisor_code = entry.supervisor_code
-
-                    cursor.execute("""INSERT INTO Advisor_Data (
-                        date, timestamp, advisor_name, workstation_name, supervisor_code, 
-                        running_repair, free_service, paid_service, body_shop, total,
-                        align, balance, align_and_balance
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    cursor.execute("""
+                        INSERT INTO Advisor_Data (
+                            date, timestamp, advisor_name, workstation_name, supervisor_name,
+                            running_repair, free_service, paid_service, body_shop, total,
+                            align, balance, align_and_balance
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
                         entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, supervisor_code,
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop, entry.total,
                         entry.align, entry.balance, entry.align_and_balance
                     ))
-
             conn.commit()
             return {"status": "success", "message": "Advisor data saved"}
 
