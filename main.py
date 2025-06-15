@@ -280,17 +280,24 @@ def save_advisor_data(entries: List[AdvisorEntry]):
         with conn.cursor() as cursor:
             for entry in entries:
 
-                # ✅ Resolve supervisor_code into supervisor_name
+                # ✅ New logic to resolve supervisor_name based on workstation_name
                 resolved_supervisor_name = "Unknown"
                 try:
-                    cursor.execute("SELECT Name FROM User_Credentials WHERE Code = %s", (entry.supervisor_name,))
-                    result = cursor.fetchone()
-                    if result:
-                        resolved_supervisor_name = result[0]
+                    # First: get supervisor_code from workstation name
+                    cursor.execute("SELECT Supervisor_Code FROM User_Credentials WHERE Name = %s", (entry.workstation_name,))
+                    supervisor_code_result = cursor.fetchone()
+                    
+                    if supervisor_code_result:
+                        supervisor_code = supervisor_code_result[0]
+                        # Second: get supervisor_name from supervisor_code
+                        cursor.execute("SELECT Name FROM User_Credentials WHERE Code = %s", (supervisor_code,))
+                        supervisor_name_result = cursor.fetchone()
+                        if supervisor_name_result:
+                            resolved_supervisor_name = supervisor_name_result[0]
                 except Exception as e:
-                    print(f"Supervisor resolution failed for {entry.supervisor_name}: {e}")
+                    print(f"Supervisor name resolution failed: {e}")
 
-                # ✅ Check if record already exists
+                # ✅ Existing logic remains unchanged
                 cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", 
                                (entry.date, entry.advisor_name))
                 exists = cursor.fetchone()[0] > 0
