@@ -295,15 +295,17 @@ def save_advisor_data(entries: List[AdvisorEntry]):
             return {"status": "success", "message": "Advisor data saved"}
 
 
-@app.get("/advisor/list", dependencies=[Depends(verify_api_key)])
-def get_advisors(supervisor_code: str = Query(...)):
+@app.get("/advisors", dependencies=[Depends(verify_api_key)])
+def get_advisors(workstation_code: str = Query(...)):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT name FROM User_Credentials WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
-            """, (supervisor_code,))
+                SELECT name FROM User_Credentials
+                WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
+            """, (workstation_code,))
             advisors = [row[0] for row in cursor.fetchall()]
             return {"advisors": advisors}
+
 
 
 @app.get("/advisor/monthly-summary", dependencies=[Depends(verify_api_key)])
