@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 from mysql.connector.pooling import MySQLConnectionPool
@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from typing import List
 import threading, time as time_module
 import pytz
-import pandas as pd
 
 app = FastAPI()
 
@@ -167,24 +166,6 @@ class AdvisorEntry(BaseModel):
     timestamp: str
     advisor_name: str
     workstation_name: str
-    supervisor_name: str  # ✅ supervisor_code is passed here
-    running_repair: int
-    free_service: int
-    paid_service: int
-    body_shop: int
-    total: int
-    align: int
-    balance: int
-    align_and_balance: int
-
-
-
-
-
-class WorkstationEntry(BaseModel):
-    date: str
-    timestamp: str
-    workstation_name: str
     supervisor_name: str
     running_repair: int
     free_service: int
@@ -194,7 +175,6 @@ class WorkstationEntry(BaseModel):
     align: int
     balance: int
     align_and_balance: int
-
 
 # ======================== ENDPOINTS ============================
 
@@ -280,14 +260,10 @@ def get_supervisor_name(code: str = Query(...)):
 
 @app.post("/advisor/save", dependencies=[Depends(verify_api_key)])
 def save_advisor_data(entries: List[AdvisorEntry]):
-    print("Received advisor entries:", entries)  # ✅ Debug log
     with get_connection() as conn:
         with conn.cursor() as cursor:
             for entry in entries:
-                supervisor_code = entry.supervisor_name  # ✅ we store code directly
-
-                cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", 
-                               (entry.date, entry.advisor_name))
+                cursor.execute("SELECT COUNT(*) FROM Advisor_Data WHERE date = %s AND advisor_name = %s", (entry.date, entry.advisor_name))
                 exists = cursor.fetchone()[0] > 0
 
                 if exists:
@@ -300,7 +276,7 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                     """, (
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop,
                         entry.total, entry.align, entry.balance, entry.align_and_balance, entry.timestamp,
-                        entry.workstation_name, supervisor_code,
+                        entry.workstation_name, entry.supervisor_name,
                         entry.date, entry.advisor_name
                     ))
                 else:
@@ -311,7 +287,7 @@ def save_advisor_data(entries: List[AdvisorEntry]):
                             align, balance, align_and_balance
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, supervisor_code,
+                        entry.date, entry.timestamp, entry.advisor_name, entry.workstation_name, entry.supervisor_name,
                         entry.running_repair, entry.free_service, entry.paid_service, entry.body_shop, entry.total,
                         entry.align, entry.balance, entry.align_and_balance
                     ))
@@ -319,170 +295,30 @@ def save_advisor_data(entries: List[AdvisorEntry]):
             return {"status": "success", "message": "Advisor data saved"}
 
 
-@app.get("/advisors", dependencies=[Depends(verify_api_key)])
-def get_advisors(workstation_code: str = Query(...)):
+@app.get("/advisor/list", dependencies=[Depends(verify_api_key)])
+def get_advisors(supervisor_code: str = Query(...)):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT name FROM User_Credentials
-                WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
-            """, (workstation_code,))
+                SELECT name FROM User_Credentials WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
+            """, (supervisor_code,))
             advisors = [row[0] for row in cursor.fetchall()]
             return {"advisors": advisors}
 
 
-
-    start_of_month = get_ist_now().replace(day=1).strftime("%Y-%m-%d")
-
-    response = {
-        "target": None,
-        "monthly_totals": None,
-        "existing_today": None
-    }
-
-    with get_connection() as conn:
-        with conn.cursor(dictionary=True) as cursor:
-            # Fetch Target
-            cursor.execute("SELECT Target FROM User_Credentials WHERE Name = %s", (workstation_name,))
-            row = cursor.fetchone()
-            response["target"] = row["Target"] if row else None
-
-            # Fetch Monthly Summary
-            cursor.execute("""
-                SELECT 
-                    SUM(running_repair) AS running_repair,
-                    SUM(free_service) AS free_service,
-                    SUM(paid_service) AS paid_service,
-                    SUM(body_shop) AS body_shop,
-                    SUM(total) AS total,
-                    SUM(align) AS align,
-                    SUM(balance) AS balance,
-                    SUM(align_and_balance) AS align_and_balance
-                FROM Workstation_Data
-                WHERE date >= %s AND workstation_name = %s
-            """, (start_of_month, workstation_name))
-            response["monthly_totals"] = cursor.fetchone()
-
-            # Fetch Existing Data for Today
-            cursor.execute("""
-                SELECT running_repair, free_service, paid_service, body_shop,
-                       total, align, balance, align_and_balance
-                FROM Workstation_Data
-                WHERE date = %s AND workstation_name = %s
-            """, (today, workstation_name))
-            response["existing_today"] = cursor.fetchone()
-
-    return response
-
-
-
-@app.post("/workstation/save", dependencies=[Depends(verify_api_key)])
-def save_workstation_entry(entry: WorkstationEntry):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT COUNT(*) FROM Workstation_Data WHERE date = %s AND workstation_name = %s
-            """, (entry.date, entry.workstation_name))
-            exists = cursor.fetchone()[0] > 0
-
-            if exists:
-                cursor.execute("""
-                    UPDATE Workstation_Data
-                    SET running_repair = %s, free_service = %s, paid_service = %s,
-                        body_shop = %s, total = %s, align = %s, balance = %s,
-                        align_and_balance = %s, timestamp = %s, supervisor_name = %s
-                    WHERE date = %s AND workstation_name = %s
-                """, (
-                    entry.running_repair, entry.free_service, entry.paid_service,
-                    entry.body_shop, entry.total, entry.align, entry.balance,
-                    entry.align_and_balance, entry.timestamp, entry.supervisor_name,
-                    entry.date, entry.workstation_name
-                ))
-            else:
-                cursor.execute("""
-                    INSERT INTO Workstation_Data (
-                        date, timestamp, workstation_name, supervisor_name,
-                        running_repair, free_service, paid_service, body_shop,
-                        total, align, balance, align_and_balance
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    entry.date, entry.timestamp, entry.workstation_name, entry.supervisor_name,
-                    entry.running_repair, entry.free_service, entry.paid_service,
-                    entry.body_shop, entry.total, entry.align, entry.balance, entry.align_and_balance
-                ))
-
-            conn.commit()
-            return {"status": "success", "message": "Workstation data saved successfully."}
-
-@app.get("/workstation/summary", dependencies=[Depends(verify_api_key)])
-def workstation_summary(workstation_name: str = Query(...)):
-    today = get_ist_now().strftime("%Y-%m-%d")
-    start_of_month = get_ist_now().replace(day=1).strftime("%Y-%m-%d")
-
-    print("▶️ [Workstation Summary] Requested for:", workstation_name)
-    print("   ↪ Start of month:", start_of_month, "| Today:", today)
-
-    response = {
-        "target": None,
-        "monthly_totals": None,
-        "existing_today": None
-    }
-
-    with get_connection() as conn:
-        with conn.cursor(dictionary=True) as cursor:
-            # Fetch Target
-            cursor.execute("SELECT Target FROM User_Credentials WHERE Name = %s", (workstation_name,))
-            row = cursor.fetchone()
-            print("   ↪ Target Row:", row)
-            response["target"] = row["Target"] if row else None
-
-            # Fetch Monthly Summary
-            cursor.execute("""
-                SELECT 
-                    SUM(running_repair) AS running_repair,
-                    SUM(free_service) AS free_service,
-                    SUM(paid_service) AS paid_service,
-                    SUM(body_shop) AS body_shop,
-                    SUM(total) AS total,
-                    SUM(align) AS align,
-                    SUM(balance) AS balance,
-                    SUM(align_and_balance) AS align_and_balance
-                FROM Workstation_Data
-                WHERE date >= %s AND workstation_name = %s
-            """, (start_of_month, workstation_name))
-            summary = cursor.fetchone()
-            print("   ↪ Monthly Summary:", summary)
-            response["monthly_totals"] = summary
-
-            # Fetch Existing Data for Today
-            cursor.execute("""
-                SELECT running_repair, free_service, paid_service, body_shop,
-                       total, align, balance, align_and_balance
-                FROM Workstation_Data
-                WHERE date = %s AND workstation_name = %s
-            """, (today, workstation_name))
-            today_data = cursor.fetchone()
-            print("   ↪ Existing Today’s Entry:", today_data)
-            response["existing_today"] = today_data
-
-    return response
-
-
-
 @app.get("/advisor/monthly-summary", dependencies=[Depends(verify_api_key)])
-def advisor_summary(start_date: str = Query(...), advisor_names: str = Query(...)):
-    advisor_list = advisor_names.split(",")
-    print("▶️ [Advisor Summary] Start Date:", start_date)
-    print("   ↪ Advisors:", advisor_list)
-
-    if not advisor_list:
-        return {"summary": []}
-
-    placeholders = ",".join(["%s"] * len(advisor_list))
-
+def advisor_summary(supervisor_code: str = Query(...), start_date: str = Query(...)):
     with get_connection() as conn:
         with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT name FROM User_Credentials 
+                WHERE Supervisor_Code = %s AND User_Role = 'Advisor'
+            """, (supervisor_code,))
+            advisors = [row[0] for row in cursor.fetchall()]
+            if not advisors:
+                return {"data": []}
+
+            placeholders = ",".join(["%s"] * len(advisors))
             query = f"""
                 SELECT advisor_name,
                        SUM(running_repair), SUM(free_service), SUM(paid_service), SUM(body_shop),
@@ -491,23 +327,11 @@ def advisor_summary(start_date: str = Query(...), advisor_names: str = Query(...
                 WHERE date >= %s AND advisor_name IN ({placeholders})
                 GROUP BY advisor_name
             """
-            print("   ↪ Executing SQL:", query)
-            cursor.execute(query, [start_date] + advisor_list)
+            cursor.execute(query, [start_date] + advisors)
             rows = cursor.fetchall()
-            print("   ↪ Summary Results:", rows)
 
             return {
-                "summary": [
-                    {
-                        "Advisor Name": row[0],
-                        "Running Repair": row[1],
-                        "Free Service": row[2],
-                        "Paid Service": row[3],
-                        "Body Shop": row[4],
-                        "Total": row[5],
-                        "Align": row[6],
-                        "Balance": row[7],
-                        "Align and Balance": row[8],
-                    } for row in rows
-                ]
+                "data": rows,
+                "columns": ["Advisor Name", "Running Repair", "Free Service", "Paid Service", 
+                            "Body Shop", "Total", "Align", "Balance", "Align and Balance"]
             }
